@@ -1,0 +1,6 @@
+python-telegram-bot==21.6
+requests
+pytz
+flask
+pandas
+numpy
