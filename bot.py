@@ -865,7 +865,7 @@ def format_multi_exchange_signal(signals):
     exchanges = []
     for s in signals:
         exchanges.append(
-            f"• {s['exchange']} | السعر: {s['price']:.8f} | Volume Ratio: {s['volume_ratio']:.2f}x"
+            f"• {s['exchange']} | السعر: {s['price']:.8f} | Volume Ratio: {s['volume_ratio']:.2f}x | Volume: {format_money(s['volume'])}"
         )
     exchange_text = "\n".join(exchanges)
 
@@ -873,7 +873,11 @@ def format_multi_exchange_signal(signals):
     avg_k = sum(s["k"] for s in signals) / len(signals)
     avg_d = sum(s["d"] for s in signals) / len(signals)
     avg_volume_ratio = sum(s["volume_ratio"] for s in signals) / len(signals)
-    best_volume_ratio = max(s["volume_ratio"] for s in signals)
+    best_signal_by_volume_ratio = max(signals, key=lambda x: x["volume_ratio"])
+    best_volume_ratio = best_signal_by_volume_ratio["volume_ratio"]
+    best_volume_value = best_signal_by_volume_ratio["volume"]
+    total_current_volume = sum(s["volume"] for s in signals)
+    avg_current_volume = total_current_volume / len(signals)
 
     tp1 = avg_price * 1.03
     tp2 = avg_price * 1.06
@@ -914,8 +918,9 @@ D: {avg_d:.2f}
 الزخم: يتحسن بقوة ✅
 
 💧 <b>Volume Analysis</b>
-أعلى Volume Ratio: <b>{best_volume_ratio:.2f}x</b>
-متوسط Volume Ratio: <b>{avg_volume_ratio:.2f}x</b>
+أعلى Volume Ratio: <b>{best_volume_ratio:.2f}x</b> | Volume: <b>{format_money(best_volume_value)}</b>
+متوسط Volume Ratio: <b>{avg_volume_ratio:.2f}x</b> | متوسط Volume: <b>{format_money(avg_current_volume)}</b>
+إجمالي Volume الحالي: <b>{format_money(total_current_volume)}</b>
 الحالة: Smart Money Activity ✅
 {cmc_text}
 🎯 <b>الأهداف</b>
