@@ -40,6 +40,11 @@ REQUIRE_MACD_POSITIVE = os.getenv("REQUIRE_MACD_POSITIVE", "true").lower() == "t
 
 SIGNAL_COOLDOWN_HOURS = int(os.getenv("SIGNAL_COOLDOWN_HOURS", "6"))
 
+# Multi-exchange confirmation settings
+MIN_EXCHANGE_CONFIRMATIONS = int(os.getenv("MIN_EXCHANGE_CONFIRMATIONS", "2"))
+MULTI_EXCHANGE_WINDOW_MINUTES = int(os.getenv("MULTI_EXCHANGE_WINDOW_MINUTES", "60"))
+MULTI_EXCHANGE_GLOBAL_COOLDOWN_HOURS = int(os.getenv("MULTI_EXCHANGE_GLOBAL_COOLDOWN_HOURS", "6"))
+
 ENABLE_GATE = os.getenv("ENABLE_GATE", "true").lower() == "true"
 ENABLE_MEXC = os.getenv("ENABLE_MEXC", "true").lower() == "true"
 ENABLE_KUCOIN = os.getenv("ENABLE_KUCOIN", "true").lower() == "true"
@@ -70,6 +75,8 @@ EXCLUDED_KEYWORDS = [
 ]
 
 sent_signals = {}
+global_sent_signals = {}
+pending_multi_signals = {}
 cmc_allowed_symbols = {}
 last_cmc_update = 0
 
@@ -126,6 +133,26 @@ def cooldown_ok(key):
     if not last:
         return True
     return now - last >= SIGNAL_COOLDOWN_HOURS * 3600
+
+def global_cooldown_ok(symbol_key):
+    now = time.time()
+    last = global_sent_signals.get(symbol_key)
+    if not last:
+        return True
+    return now - last >= MULTI_EXCHANGE_GLOBAL_COOLDOWN_HOURS * 3600
+
+def format_money(value):
+    try:
+        value = float(value)
+    except Exception:
+        value = 0
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.2f}K"
+    return f"${value:,.0f}"
 
 def convert_timeframe(exchange):
     tf = TIMEFRAME
@@ -740,7 +767,6 @@ def analyze_symbol(exchange, symbol, ticker_func, candle_func):
         score += 5
         reasons.append("✅ السعر فوق EMA20")
 
-    sent_signals[key] = time.time()
     cmc = get_cmc_info(symbol)
 
     return {
@@ -769,61 +795,181 @@ def analyze_symbol(exchange, symbol, ticker_func, candle_func):
         "cmc_volume_24h": cmc.get("volume_24h", 0)
     }
 
-def format_signal(s):
-    reasons = "\n".join(s["reasons"])
+def register_multi_exchange_signal(signal):
+    symbol_key = base_symbol(signal["raw_symbol"])
+    now_ts = time.time()
+    window_seconds = MULTI_EXCHANGE_WINDOW_MINUTES * 60
+
+    if symbol_key not in pending_multi_signals:
+        pending_multi_signals[symbol_key] = []
+
+    # Keep only recent signals inside the confirmation window
+    pending_multi_signals[symbol_key] = [
+        x for x in pending_multi_signals[symbol_key]
+        if now_ts - x.get("detected_at", now_ts) <= window_seconds
+    ]
+
+    # Avoid duplicate exchange entries for the same coin inside the same window
+    pending_multi_signals[symbol_key] = [
+        x for x in pending_multi_signals[symbol_key]
+        if x.get("exchange") != signal.get("exchange")
+    ]
+
+    signal["detected_at"] = now_ts
+    pending_multi_signals[symbol_key].append(signal)
+
+    return symbol_key, pending_multi_signals[symbol_key]
+
+def calculate_multi_score(signals):
+    if not signals:
+        return 0
+
+    exchanges_count = len({s["exchange"] for s in signals})
+    best_volume_ratio = max(s["volume_ratio"] for s in signals)
+    avg_k = sum(s["k"] for s in signals) / len(signals)
+    macd_positive_count = sum(1 for s in signals if s["macd"] > 0 and s["macd"] > s["macd_prev"])
+
+    score = 0
+
+    if exchanges_count >= 2:
+        score += 25
+    if exchanges_count >= 3:
+        score += 10
+
+    if best_volume_ratio >= 2.5:
+        score += 25
+    elif best_volume_ratio >= 1.8:
+        score += 18
+    else:
+        score += 10
+
+    if avg_k < 20:
+        score += 20
+    elif avg_k < MAX_RSI_BUY:
+        score += 12
+
+    if macd_positive_count >= exchanges_count:
+        score += 20
+    elif macd_positive_count >= 1:
+        score += 12
+
+    score += min(10, exchanges_count * 3)
+
+    return min(score, 100)
+
+def format_multi_exchange_signal(signals):
+    signals = sorted(signals, key=lambda x: x["volume_ratio"], reverse=True)
+    best = signals[0]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    exchanges = []
+    for s in signals:
+        exchanges.append(
+            f"• {s['exchange']} | السعر: {s['price']:.8f} | Volume Ratio: {s['volume_ratio']:.2f}x"
+        )
+    exchange_text = "\n".join(exchanges)
+
+    avg_price = sum(s["price"] for s in signals) / len(signals)
+    avg_k = sum(s["k"] for s in signals) / len(signals)
+    avg_d = sum(s["d"] for s in signals) / len(signals)
+    avg_volume_ratio = sum(s["volume_ratio"] for s in signals) / len(signals)
+    best_volume_ratio = max(s["volume_ratio"] for s in signals)
+
+    tp1 = avg_price * 1.03
+    tp2 = avg_price * 1.06
+    tp3 = avg_price * 1.10
+    sl = avg_price * 0.94
+
+    score = calculate_multi_score(signals)
+
     cmc_text = ""
-    if s["market_cap"]:
+    if best["market_cap"]:
         cmc_text = f"""
 🌐 <b>CoinMarketCap</b>
-الاسم: {s['cmc_name']}
-الترتيب: {s['cmc_rank']}
-Market Cap: ${s['market_cap']:,.0f}
-CMC 24H Volume: ${s['cmc_volume_24h']:,.0f}
+الاسم: {best['cmc_name']}
+الترتيب: {best['cmc_rank']}
+Market Cap: {format_money(best['market_cap'])}
+CMC 24H Volume: {format_money(best['cmc_volume_24h'])}
 """
 
     return f"""
-🟢 <b>EARLY REVERSAL ALERT | 4H</b>
+🔥 <b>MULTI-EXCHANGE EARLY REVERSAL</b>
 ━━━━━━━━━━━━━━
+🪙 العملة: <b>{base_symbol(best['raw_symbol'])}/USDT</b>
 ⏰ الوقت: {now}
-🏦 المنصة: <b>{s['exchange']}</b>
-🪙 العملة: <b>{s['symbol']}</b>
-💰 سعر الدخول: <b>{s['price']:.8f}</b>
 
-📊 <b>Stoch RSI</b>
-K: {s['k']:.2f}
-D: {s['d']:.2f}
+🏦 <b>تم رصد التحرك على {len(signals)} منصات:</b>
+{exchange_text}
+
+📊 <b>متوسط البيانات بين المنصات</b>
+💰 متوسط سعر الدخول: <b>{avg_price:.8f}</b>
+
+📈 <b>Stoch RSI</b>
+K: {avg_k:.2f}
+D: {avg_d:.2f}
+الحالة: Oversold Reversal ✅
 
 📈 <b>MACD Histogram</b>
-الحالي: {s['macd']:.8f}
-السابق: {s['macd_prev']:.8f}
-الحالة: موجب ويتحسن ✅
+الحالة: تحول من سالب إلى موجب ✅
+الزخم: يتحسن بقوة ✅
 
-💧 <b>Volume</b>
-حجم الشمعة الحالية: ${s['volume']:,.0f}
-متوسط آخر {VOLUME_LOOKBACK} شمعة: ${s['avg_volume']:,.0f}
-Volume Ratio: <b>{s['volume_ratio']:.2f}x</b>
-
-📊 Exchange 24H Volume: ${s['quote_volume']:,.0f}
-📈 تغير 24H: {s['change_24h']:.2f}%
+💧 <b>Volume Analysis</b>
+أعلى Volume Ratio: <b>{best_volume_ratio:.2f}x</b>
+متوسط Volume Ratio: <b>{avg_volume_ratio:.2f}x</b>
+الحالة: Smart Money Activity ✅
 {cmc_text}
 🎯 <b>الأهداف</b>
-TP1: {s['tp1']:.8f} (+3%)
-TP2: {s['tp2']:.8f} (+6%)
-TP3: {s['tp3']:.8f} (+10%)
-SL: {s['sl']:.8f} (-6%)
+TP1: {tp1:.8f} (+3%)
+TP2: {tp2:.8f} (+6%)
+TP3: {tp3:.8f} (+10%)
 
-🔔 <b>متابعة الأهداف:</b>
-سيتم إرسال تنبيه تلقائي عند تحقق كل هدف.
+🛑 <b>Stop Loss</b>
+SL: {sl:.8f} (-6%)
 
-⭐ قوة الإشارة: <b>{s['score']}%</b>
+⭐ قوة الإشارة: <b>{score}%</b>
 
-🔥 <b>أسباب التنبيه</b>
-{reasons}
+🔥 <b>أسباب قوة الإشارة</b>
+✅ نفس الحركة ظهرت على عدة منصات
+✅ MACD تحول موجب مبكر
+✅ Volume قوي
+✅ Stoch RSI منخفض جدًا
+✅ السعر قريب من EMA20
+✅ بداية انعكاس مبكرة
+
+🚨 توافق عدة منصات غالبًا يعني أن السيولة بدأت تدخل فعليًا للعملة.
 
 ⚠️ تحليل آلي فقط وليس نصيحة مالية.
 """
+
+def process_multi_exchange_signals(new_signals):
+    sent_count = 0
+
+    for signal in new_signals:
+        symbol_key, grouped_signals = register_multi_exchange_signal(signal)
+
+        exchanges_count = len({s["exchange"] for s in grouped_signals})
+
+        if exchanges_count < MIN_EXCHANGE_CONFIRMATIONS:
+            continue
+
+        if not global_cooldown_ok(symbol_key):
+            continue
+
+        grouped_signals = sorted(grouped_signals, key=lambda x: x["volume_ratio"], reverse=True)
+
+        send_telegram(format_multi_exchange_signal(grouped_signals))
+        global_sent_signals[symbol_key] = time.time()
+
+        # Mark each exchange pair cooldown only after the confirmed multi-exchange alert is sent
+        for s in grouped_signals:
+            sent_signals[f"{s['exchange']}:{s['raw_symbol']}"] = time.time()
+
+        # Follow targets using the strongest exchange signal
+        add_active_trade(grouped_signals[0])
+
+        sent_count += 1
+
+    return sent_count
 
 def startup_message():
     exchanges = []
@@ -866,6 +1012,8 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
 • Volume Ratio أعلى من {MIN_VOLUME_RATIO}x
 • حجم الشمعة الحالية أعلى من ${MIN_CURRENT_CANDLE_VOLUME:,.0f}
 • 24H Change أقل من {MAX_24H_CHANGE}%
+• تأكيد الإشارة من عدد منصات: {MIN_EXCHANGE_CONFIRMATIONS}
+• نافذة توافق المنصات: {MULTI_EXCHANGE_WINDOW_MINUTES} دقيقة
 
 🎯 <b>متابعة الأهداف:</b>
 • TP1 +3%
@@ -878,24 +1026,25 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
     send_telegram(msg)
 
 def scan_exchange(name, symbols_func, ticker_func, candle_func):
+    signals = []
+
     try:
         symbols = symbols_func()
         print(f"Scanning {name}: {len(symbols)} symbols")
 
-        found = 0
         for symbol in symbols:
             signal = analyze_symbol(name, symbol, ticker_func, candle_func)
             if signal:
-                found += 1
-                send_telegram(format_signal(signal))
-                add_active_trade(signal)
-                print(f"Signal Found: {name} {symbol}")
+                signals.append(signal)
+                print(f"Candidate Found: {name} {symbol}")
             time.sleep(0.15)
 
-        print(f"{name} scan finished. Signals: {found}")
+        print(f"{name} scan finished. Candidates: {len(signals)}")
 
     except Exception as e:
         print(f"{name} scan error:", e)
+
+    return signals
 
 def scanner_loop():
     startup_message()
@@ -906,22 +1055,26 @@ def scanner_loop():
 
             monitor_active_trades()
 
+            all_signals = []
+
             if ENABLE_GATE:
-                scan_exchange("Gate", gate_symbols, gate_ticker, gate_candles)
+                all_signals.extend(scan_exchange("Gate", gate_symbols, gate_ticker, gate_candles))
             if ENABLE_MEXC:
-                scan_exchange("MEXC", mexc_symbols, mexc_ticker, mexc_candles)
+                all_signals.extend(scan_exchange("MEXC", mexc_symbols, mexc_ticker, mexc_candles))
             if ENABLE_KUCOIN:
-                scan_exchange("KuCoin", kucoin_symbols, kucoin_ticker, kucoin_candles)
+                all_signals.extend(scan_exchange("KuCoin", kucoin_symbols, kucoin_ticker, kucoin_candles))
             if ENABLE_OKX:
-                scan_exchange("OKX", okx_symbols, okx_ticker, okx_candles)
+                all_signals.extend(scan_exchange("OKX", okx_symbols, okx_ticker, okx_candles))
             if ENABLE_BYBIT:
-                scan_exchange("Bybit", bybit_symbols, bybit_ticker, bybit_candles)
+                all_signals.extend(scan_exchange("Bybit", bybit_symbols, bybit_ticker, bybit_candles))
             if ENABLE_BITGET:
-                scan_exchange("Bitget", bitget_symbols, bitget_ticker, bitget_candles)
+                all_signals.extend(scan_exchange("Bitget", bitget_symbols, bitget_ticker, bitget_candles))
+
+            multi_sent = process_multi_exchange_signals(all_signals)
 
             monitor_active_trades()
 
-            print("Full scan finished.")
+            print(f"Full scan finished. Candidates: {len(all_signals)} | Multi alerts sent: {multi_sent}")
 
         except Exception as e:
             print("Main scanner error:", e)
