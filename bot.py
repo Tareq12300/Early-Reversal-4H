@@ -59,7 +59,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Early Reversal Bot 4H is running ✅"
+    return f"Early Reversal Bot {TIMEFRAME.upper()} is running ✅"
 
 # =========================
 # FILTERS
@@ -863,11 +863,19 @@ def format_multi_exchange_signal(signals):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     exchanges = []
+    stoch_lines = []
+
     for s in signals:
         exchanges.append(
             f"• {s['exchange']} | السعر: {s['price']:.8f} | Volume Ratio: {s['volume_ratio']:.2f}x | Volume: {format_money(s['volume'])}"
         )
+
+        stoch_lines.append(
+            f"• {s['exchange']} → K: {s['k']:.2f} | D: {s['d']:.2f}"
+        )
+
     exchange_text = "\n".join(exchanges)
+    stoch_by_exchange_text = "\n".join(stoch_lines)
 
     avg_price = sum(s["price"] for s in signals) / len(signals)
     avg_k = sum(s["k"] for s in signals) / len(signals)
@@ -908,10 +916,13 @@ CMC 24H Volume: {format_money(best['cmc_volume_24h'])}
 📊 <b>متوسط البيانات بين المنصات</b>
 💰 متوسط سعر الدخول: <b>{avg_price:.8f}</b>
 
-📈 <b>Stoch RSI</b>
+📈 <b>Stoch RSI Average</b>
 K: {avg_k:.2f}
 D: {avg_d:.2f}
 الحالة: Oversold Reversal ✅
+
+📈 <b>Stoch RSI By Exchange</b>
+{stoch_by_exchange_text}
 
 📈 <b>MACD Histogram</b>
 الحالة: تحول من سالب إلى موجب ✅
@@ -994,7 +1005,7 @@ def startup_message():
     exchange_text = "\n".join([f"• {x}" for x in exchanges])
 
     msg = f"""
-🤖 <b>بوت Early Reversal 4H اشتغل بنجاح ✅</b>
+🤖 <b>بوت Early Reversal {TIMEFRAME.upper()} اشتغل بنجاح ✅</b>
 
 ━━━━━━━━━━━━━━
 📊 الفريم: <b>{TIMEFRAME}</b>
