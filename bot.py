@@ -446,7 +446,11 @@ def gate_ticker(symbol):
         if not data:
             return None
         x = data[0]
-        return {"price": safe_float(x.get("last")), "quote_volume": safe_float(x.get("quote_volume")), "change_24h": safe_float(x.get("change_percentage"))}
+        return {
+            "price": safe_float(x.get("last")),
+            "quote_volume": safe_float(x.get("quote_volume")),
+            "change_24h": safe_float(x.get("change_percentage"))
+        }
     except Exception:
         return None
 
@@ -456,7 +460,14 @@ def gate_candles(symbol):
         data = requests.get("https://api.gateio.ws/api/v4/spot/candlesticks", params=params, timeout=20).json()
         rows = []
         for c in data:
-            rows.append({"time": int(c[0]), "volume_quote": safe_float(c[1]), "close": safe_float(c[2]), "high": safe_float(c[3]), "low": safe_float(c[4]), "open": safe_float(c[5])})
+            rows.append({
+                "time": int(c[0]),
+                "volume_quote": safe_float(c[1]),
+                "close": safe_float(c[2]),
+                "high": safe_float(c[3]),
+                "low": safe_float(c[4]),
+                "open": safe_float(c[5])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -478,7 +489,11 @@ def mexc_symbols():
 def mexc_ticker(symbol):
     try:
         x = requests.get(f"https://api.mexc.com/api/v3/ticker/24hr?symbol={symbol}", timeout=15).json()
-        return {"price": safe_float(x.get("lastPrice")), "quote_volume": safe_float(x.get("quoteVolume")), "change_24h": safe_float(x.get("priceChangePercent"))}
+        return {
+            "price": safe_float(x.get("lastPrice")),
+            "quote_volume": safe_float(x.get("quoteVolume")),
+            "change_24h": safe_float(x.get("priceChangePercent"))
+        }
     except Exception:
         return None
 
@@ -488,7 +503,14 @@ def mexc_candles(symbol):
         data = requests.get("https://api.mexc.com/api/v3/klines", params=params, timeout=20).json()
         rows = []
         for c in data:
-            rows.append({"time": int(c[0]), "open": safe_float(c[1]), "high": safe_float(c[2]), "low": safe_float(c[3]), "close": safe_float(c[4]), "volume_quote": safe_float(c[7])})
+            rows.append({
+                "time": int(c[0]),
+                "open": safe_float(c[1]),
+                "high": safe_float(c[2]),
+                "low": safe_float(c[3]),
+                "close": safe_float(c[4]),
+                "volume_quote": safe_float(c[7])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -510,7 +532,11 @@ def kucoin_symbols():
 def kucoin_ticker(symbol):
     try:
         x = requests.get(f"https://api.kucoin.com/api/v1/market/stats?symbol={symbol}", timeout=15).json().get("data", {})
-        return {"price": safe_float(x.get("last")), "quote_volume": safe_float(x.get("volValue")), "change_24h": safe_float(x.get("changeRate")) * 100}
+        return {
+            "price": safe_float(x.get("last")),
+            "quote_volume": safe_float(x.get("volValue")),
+            "change_24h": safe_float(x.get("changeRate")) * 100
+        }
     except Exception:
         return None
 
@@ -520,7 +546,14 @@ def kucoin_candles(symbol):
         data = requests.get("https://api.kucoin.com/api/v1/market/candles", params=params, timeout=20).json().get("data", [])
         rows = []
         for c in data[:120]:
-            rows.append({"time": int(c[0]), "open": safe_float(c[1]), "close": safe_float(c[2]), "high": safe_float(c[3]), "low": safe_float(c[4]), "volume_quote": safe_float(c[6])})
+            rows.append({
+                "time": int(c[0]),
+                "open": safe_float(c[1]),
+                "close": safe_float(c[2]),
+                "high": safe_float(c[3]),
+                "low": safe_float(c[4]),
+                "volume_quote": safe_float(c[6])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -545,7 +578,11 @@ def okx_ticker(symbol):
         open24h = safe_float(x.get("open24h"))
         last = safe_float(x.get("last"))
         change = ((last - open24h) / open24h * 100) if open24h > 0 else 0
-        return {"price": last, "quote_volume": safe_float(x.get("volCcy24h")), "change_24h": change}
+        return {
+            "price": last,
+            "quote_volume": safe_float(x.get("volCcy24h")),
+            "change_24h": change
+        }
     except Exception:
         return None
 
@@ -555,7 +592,14 @@ def okx_candles(symbol):
         data = requests.get("https://www.okx.com/api/v5/market/candles", params=params, timeout=20).json().get("data", [])
         rows = []
         for c in data:
-            rows.append({"time": int(c[0]), "open": safe_float(c[1]), "high": safe_float(c[2]), "low": safe_float(c[3]), "close": safe_float(c[4]), "volume_quote": safe_float(c[7])})
+            rows.append({
+                "time": int(c[0]),
+                "open": safe_float(c[1]),
+                "high": safe_float(c[2]),
+                "low": safe_float(c[3]),
+                "close": safe_float(c[4]),
+                "volume_quote": safe_float(c[7])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -579,7 +623,11 @@ def bybit_ticker(symbol):
     try:
         params = {"category": "spot", "symbol": symbol}
         x = requests.get("https://api.bybit.com/v5/market/tickers", params=params, timeout=15).json().get("result", {}).get("list", [])[0]
-        return {"price": safe_float(x.get("lastPrice")), "quote_volume": safe_float(x.get("turnover24h")), "change_24h": safe_float(x.get("price24hPcnt")) * 100}
+        return {
+            "price": safe_float(x.get("lastPrice")),
+            "quote_volume": safe_float(x.get("turnover24h")),
+            "change_24h": safe_float(x.get("price24hPcnt")) * 100
+        }
     except Exception:
         return None
 
@@ -589,7 +637,14 @@ def bybit_candles(symbol):
         data = requests.get("https://api.bybit.com/v5/market/kline", params=params, timeout=20).json().get("result", {}).get("list", [])
         rows = []
         for c in data:
-            rows.append({"time": int(c[0]), "open": safe_float(c[1]), "high": safe_float(c[2]), "low": safe_float(c[3]), "close": safe_float(c[4]), "volume_quote": safe_float(c[6])})
+            rows.append({
+                "time": int(c[0]),
+                "open": safe_float(c[1]),
+                "high": safe_float(c[2]),
+                "low": safe_float(c[3]),
+                "close": safe_float(c[4]),
+                "volume_quote": safe_float(c[6])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -612,7 +667,11 @@ def bitget_ticker(symbol):
     try:
         params = {"symbol": symbol}
         x = requests.get("https://api.bitget.com/api/v2/spot/market/tickers", params=params, timeout=15).json().get("data", [])[0]
-        return {"price": safe_float(x.get("lastPr")), "quote_volume": safe_float(x.get("quoteVolume")), "change_24h": safe_float(x.get("change24h")) * 100}
+        return {
+            "price": safe_float(x.get("lastPr")),
+            "quote_volume": safe_float(x.get("quoteVolume")),
+            "change_24h": safe_float(x.get("change24h")) * 100
+        }
     except Exception:
         return None
 
@@ -622,7 +681,14 @@ def bitget_candles(symbol):
         data = requests.get("https://api.bitget.com/api/v2/spot/market/candles", params=params, timeout=20).json().get("data", [])
         rows = []
         for c in data:
-            rows.append({"time": int(c[0]), "open": safe_float(c[1]), "high": safe_float(c[2]), "low": safe_float(c[3]), "close": safe_float(c[4]), "volume_quote": safe_float(c[6])})
+            rows.append({
+                "time": int(c[0]),
+                "open": safe_float(c[1]),
+                "high": safe_float(c[2]),
+                "low": safe_float(c[3]),
+                "close": safe_float(c[4]),
+                "volume_quote": safe_float(c[6])
+            })
         df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
         return df if len(df) >= 60 else None
     except Exception:
@@ -728,6 +794,7 @@ def monitor_active_trades():
             trade["hit_sl"] = True
             send_telegram(format_stop_loss_alert(trade, current_price))
             closed_trades.append(key)
+
         time.sleep(0.15)
 
     for key in closed_trades:
@@ -905,6 +972,7 @@ def register_multi_exchange_signal(signal):
 def calculate_multi_score(signals):
     if not signals:
         return 0
+
     exchanges_count = len({s["exchange"] for s in signals})
     best_volume_ratio = max(s["volume_ratio"] for s in signals)
     avg_k = sum(s["k"] for s in signals) / len(signals)
@@ -915,20 +983,24 @@ def calculate_multi_score(signals):
         score += 25
     if exchanges_count >= 3:
         score += 10
+
     if best_volume_ratio >= 2.5:
         score += 25
     elif best_volume_ratio >= 1.8:
         score += 18
     else:
         score += 10
+
     if avg_k < 20:
         score += 20
     elif avg_k < MAX_RSI_BUY:
         score += 12
+
     if macd_positive_count >= exchanges_count:
         score += 20
     elif macd_positive_count >= 1:
         score += 12
+
     score += min(10, exchanges_count * 3)
     return min(score, 100)
 
@@ -945,19 +1017,24 @@ def format_multi_exchange_signal(signals):
 
     exchange_text = "\n".join(exchanges)
     stoch_by_exchange_text = "\n".join(stoch_lines)
+
     avg_price = sum(s["price"] for s in signals) / len(signals)
     avg_k = sum(s["k"] for s in signals) / len(signals)
     avg_d = sum(s["d"] for s in signals) / len(signals)
     avg_volume_ratio = sum(s["volume_ratio"] for s in signals) / len(signals)
+
     best_signal_by_volume_ratio = max(signals, key=lambda x: x["volume_ratio"])
     best_volume_ratio = best_signal_by_volume_ratio["volume_ratio"]
     best_volume_value = best_signal_by_volume_ratio["volume"]
+
     total_current_volume = sum(s["volume"] for s in signals)
     avg_current_volume = total_current_volume / len(signals)
+
     tp1 = avg_price * 1.03
     tp2 = avg_price * 1.06
     tp3 = avg_price * 1.10
     sl = avg_price * 0.94
+
     score = calculate_multi_score(signals)
 
     cmc_text = ""
@@ -1020,21 +1097,28 @@ SL: {sl:.8f} (-6%)
 
 def process_multi_exchange_signals(new_signals):
     sent_count = 0
+
     for signal in new_signals:
         symbol_key, grouped_signals = register_multi_exchange_signal(signal)
         exchanges_count = len({s["exchange"] for s in grouped_signals})
+
         if exchanges_count < MIN_EXCHANGE_CONFIRMATIONS:
             continue
+
         if not global_cooldown_ok(symbol_key):
             continue
 
         grouped_signals = sorted(grouped_signals, key=lambda x: x["volume_ratio"], reverse=True)
+
         send_telegram(format_multi_exchange_signal(grouped_signals))
         global_sent_signals[symbol_key] = time.time()
+
         for s in grouped_signals:
             sent_signals[f"{s['exchange']}:{s['raw_symbol']}"] = time.time()
+
         add_active_trade(grouped_signals[0])
         sent_count += 1
+
     return sent_count
 
 # =========================
@@ -1081,8 +1165,6 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
 • Volume Ratio أعلى من {MIN_VOLUME_RATIO}x
 • حجم الشمعة الحالية المغلقة أعلى من ${MIN_CURRENT_CANDLE_VOLUME:,.0f}
 • 24H Change أقل من {MAX_24H_CHANGE}%
-• تأكيد الإشارة من عدد منصات: {MIN_EXCHANGE_CONFIRMATIONS}
-• نافذة توافق المنصات: {MULTI_EXCHANGE_WINDOW_MINUTES} دقيقة
 
 🧪 <b>تقرير فشل الفحص:</b>
 الحالة: {'مفعل ✅' if DEBUG_FAILED_SUMMARY else 'غير مفعل ❌'}
@@ -1102,22 +1184,29 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
 
 def scan_exchange(name, symbols_func, ticker_func, candle_func):
     signals = []
+
     try:
         symbols = symbols_func()
         print(f"Scanning {name}: {len(symbols)} symbols")
+
         for symbol in symbols:
             signal = analyze_symbol(name, symbol, ticker_func, candle_func)
             if signal:
                 signals.append(signal)
                 print(f"Candidate Found: {name} {symbol}")
+
             time.sleep(0.15)
+
         print(f"{name} scan finished. Candidates: {len(signals)}")
+
     except Exception as e:
         print(f"{name} scan error:", e)
+
     return signals
 
 def scanner_loop():
     startup_message()
+
     while True:
         try:
             reset_failed_stats()
@@ -1125,6 +1214,7 @@ def scanner_loop():
             monitor_active_trades()
 
             all_signals = []
+
             if ENABLE_GATE:
                 all_signals.extend(scan_exchange("Gate", gate_symbols, gate_ticker, gate_candles))
             if ENABLE_MEXC:
@@ -1139,6 +1229,7 @@ def scanner_loop():
                 all_signals.extend(scan_exchange("Bitget", bitget_symbols, bitget_ticker, bitget_candles))
 
             multi_sent = process_multi_exchange_signals(all_signals)
+
             monitor_active_trades()
             send_failed_summary()
 
