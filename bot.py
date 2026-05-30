@@ -72,29 +72,6 @@ ENABLE_BYBIT = env_bool("ENABLE_BYBIT", "true")
 ENABLE_BITGET = env_bool("ENABLE_BITGET", "true")
 
 # =========================
-# DEBUG FAILED SUMMARY
-# =========================
-DEBUG_FAILED_SUMMARY = env_bool("DEBUG_FAILED_SUMMARY", "true")
-DEBUG_FAILED_SAMPLE_LIMIT = env_int("DEBUG_FAILED_SAMPLE_LIMIT", 10)
-DEBUG_ONLY_SYMBOL = os.getenv("DEBUG_ONLY_SYMBOL", "").strip().upper()
-SEND_FAILED_SUMMARY_ONLY_IF_FAILED = env_bool("SEND_FAILED_SUMMARY_ONLY_IF_FAILED", "true")
-
-failed_stats = {}
-
-def reset_failed_stats():
-    global failed_stats
-    failed_stats = {
-        "checked": 0,
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "reasons": {},
-        "samples": []
-    }
-
-reset_failed_stats()
-
-# =========================
 # FLASK
 # =========================
 app = Flask(__name__)
@@ -163,11 +140,6 @@ def base_symbol(symbol):
 def normalize_symbol(symbol):
     return str(symbol).replace("_", "/").replace("-", "/")
 
-def is_debug_symbol(symbol):
-    if not DEBUG_ONLY_SYMBOL:
-        return True
-    return base_symbol(symbol) == DEBUG_ONLY_SYMBOL
-
 def is_excluded(symbol):
     s = base_symbol(symbol)
     return any(x in s for x in EXCLUDED_KEYWORDS)
@@ -222,89 +194,6 @@ def convert_timeframe(exchange):
         }.get(tf, "4h")
     }
     return mapping.get(exchange, tf)
-
-def add_failed_reason(exchange, symbol, reasons):
-    if not DEBUG_FAILED_SUMMARY:
-        return
-    if not is_debug_symbol(symbol):
-        return
-
-    failed_stats["failed"] += 1
-
-    for reason in reasons:
-        key = str(reason).split("|")[0].strip()
-        failed_stats["reasons"][key] = failed_stats["reasons"].get(key, 0) + 1
-
-    if len(failed_stats["samples"]) < DEBUG_FAILED_SAMPLE_LIMIT:
-        failed_stats["samples"].append({
-            "exchange": exchange,
-            "symbol": normalize_symbol(symbol),
-            "reasons": reasons[:5]
-        })
-
-def add_skipped_reason(exchange, symbol, reason):
-    if not DEBUG_FAILED_SUMMARY:
-        return
-    if not is_debug_symbol(symbol):
-        return
-    failed_stats["skipped"] += 1
-    failed_stats["reasons"][reason] = failed_stats["reasons"].get(reason, 0) + 1
-
-    if len(failed_stats["samples"]) < DEBUG_FAILED_SAMPLE_LIMIT:
-        failed_stats["samples"].append({
-            "exchange": exchange,
-            "symbol": normalize_symbol(symbol),
-            "reasons": [reason]
-        })
-
-def send_failed_summary():
-    if not DEBUG_FAILED_SUMMARY:
-        return
-    if SEND_FAILED_SUMMARY_ONLY_IF_FAILED and failed_stats.get("failed", 0) == 0 and failed_stats.get("skipped", 0) == 0:
-        return
-
-    reasons_sorted = sorted(
-        failed_stats["reasons"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    reasons_text = "\n".join([f"• {reason}: <b>{count}</b>" for reason, count in reasons_sorted[:15]])
-    if not reasons_text:
-        reasons_text = "لا يوجد"
-
-    samples_text = ""
-    for item in failed_stats["samples"]:
-        samples_text += f"\n\n🏦 <b>{item['exchange']}</b> | 🪙 <b>{item['symbol']}</b>\n"
-        samples_text += "\n".join([f"• {r}" for r in item["reasons"]])
-
-    if not samples_text:
-        samples_text = "لا يوجد"
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    symbol_filter_text = DEBUG_ONLY_SYMBOL if DEBUG_ONLY_SYMBOL else "كل العملات"
-
-    msg = f"""
-📊 <b>تقرير فشل الفحص</b>
-━━━━━━━━━━━━━━
-⏰ الوقت: {now}
-📊 الفريم: <b>{TIMEFRAME}</b>
-🔎 نطاق التقرير: <b>{symbol_filter_text}</b>
-
-🔍 إجمالي العملات التي دخلت التحليل: <b>{failed_stats['checked']}</b>
-✅ العملات المرشحة: <b>{failed_stats['passed']}</b>
-❌ العملات الفاشلة بعد التحليل: <b>{failed_stats['failed']}</b>
-⏭️ العملات المستبعدة قبل التحليل الكامل: <b>{failed_stats['skipped']}</b>
-
-🚫 <b>أكثر أسباب الفشل:</b>
-{reasons_text}
-
-📌 <b>عينات من العملات الفاشلة:</b>
-{samples_text}
-
-⚠️ استخدم التقرير لتعرف أي شرط يحتاج تخفيف أو تعديل.
-"""
-    send_telegram(msg)
 
 # =========================
 # CMC FILTER
@@ -804,37 +693,26 @@ def monitor_active_trades():
 # ANALYSIS
 # =========================
 def analyze_symbol(exchange, symbol, ticker_func, candle_func):
-    if DEBUG_FAILED_SUMMARY and is_debug_symbol(symbol):
-        failed_stats["checked"] += 1
-
     if is_excluded(symbol):
-        add_skipped_reason(exchange, symbol, "مستبعد بسبب قائمة الاستبعاد")
         return None
 
     ticker = ticker_func(symbol)
     if not ticker:
-        add_skipped_reason(exchange, symbol, "فشل جلب بيانات Ticker")
         return None
 
     price = ticker["price"]
     quote_volume = ticker["quote_volume"]
     change_24h = ticker["change_24h"]
 
-    early_reasons = []
     if price <= 0:
-        early_reasons.append("السعر غير صالح")
+        return None
     if quote_volume < MIN_VOLUME_USDT:
-        early_reasons.append(f"حجم تداول 24H أقل من المطلوب | الحالي: {format_money(quote_volume)} | المطلوب: {format_money(MIN_VOLUME_USDT)}")
+        return None
     if abs(change_24h) > MAX_24H_CHANGE:
-        early_reasons.append(f"تغير 24H مرتفع | الحالي: {change_24h:.2f}% | الحد: {MAX_24H_CHANGE}%")
-
-    if early_reasons:
-        add_failed_reason(exchange, symbol, early_reasons)
         return None
 
     df = candle_func(symbol)
     if df is None or len(df) < 60:
-        add_skipped_reason(exchange, symbol, "بيانات الشموع غير كافية")
         return None
 
     close = df["close"]
@@ -859,7 +737,6 @@ def analyze_symbol(exchange, symbol, ticker_func, candle_func):
         pd.isna(k_now) or pd.isna(d_now) or pd.isna(k_prev) or pd.isna(d_prev)
         or pd.isna(hist_now) or pd.isna(hist_prev) or pd.isna(avg_volume) or avg_volume <= 0
     ):
-        add_skipped_reason(exchange, symbol, "قيم المؤشرات غير مكتملة NaN")
         return None
 
     volume_ratio = current_volume / avg_volume
@@ -870,32 +747,22 @@ def analyze_symbol(exchange, symbol, ticker_func, candle_func):
     volume_ok = volume_ratio >= MIN_VOLUME_RATIO
     price_above_ema20 = current_price > ema20.iloc[-2]
 
-    failed_reasons = []
-
     if not stoch_cross:
-        failed_reasons.append(f"Stoch RSI بدون تقاطع | K السابق: {k_prev:.2f} | D السابق: {d_prev:.2f} | K الحالي: {k_now:.2f} | D الحالي: {d_now:.2f}")
+        return None
     if not stoch_low:
-        failed_reasons.append(f"Stoch RSI أعلى من {MAX_RSI_BUY} | K الحالي: {k_now:.2f}")
+        return None
     if REQUIRE_MACD_RISING and not macd_rising:
-        failed_reasons.append(f"MACD غير متصاعد | الحالي: {hist_now:.8f} | السابق: {hist_prev:.8f}")
+        return None
     if REQUIRE_MACD_POSITIVE and not macd_positive:
-        failed_reasons.append(f"MACD سلبي | الحالي: {hist_now:.8f}")
+        return None
     if current_volume < MIN_CURRENT_CANDLE_VOLUME:
-        failed_reasons.append(f"حجم الشمعة المغلقة ضعيف | الحالي: {format_money(current_volume)} | المطلوب: {format_money(MIN_CURRENT_CANDLE_VOLUME)}")
+        return None
     if not volume_ok:
-        failed_reasons.append(f"Volume Ratio ضعيف | الحالي: {volume_ratio:.2f}x | المطلوب: {MIN_VOLUME_RATIO}x")
-
-    if failed_reasons:
-        add_failed_reason(exchange, symbol, failed_reasons)
         return None
 
     key = f"{exchange}:{symbol}"
     if not cooldown_ok(key):
-        add_skipped_reason(exchange, symbol, "Cooldown لم ينته بعد")
         return None
-
-    if DEBUG_FAILED_SUMMARY and is_debug_symbol(symbol):
-        failed_stats["passed"] += 1
 
     score = 0
     reasons = []
@@ -1166,11 +1033,6 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
 • حجم الشمعة الحالية المغلقة أعلى من ${MIN_CURRENT_CANDLE_VOLUME:,.0f}
 • 24H Change أقل من {MAX_24H_CHANGE}%
 
-🧪 <b>تقرير فشل الفحص:</b>
-الحالة: {'مفعل ✅' if DEBUG_FAILED_SUMMARY else 'غير مفعل ❌'}
-عينات التقرير: {DEBUG_FAILED_SAMPLE_LIMIT}
-فلتر عملة محددة: {DEBUG_ONLY_SYMBOL if DEBUG_ONLY_SYMBOL else 'غير محدد'}
-
 🎯 <b>متابعة الأهداف:</b>
 • TP1 +3%
 • TP2 +6%
@@ -1178,7 +1040,6 @@ Max Market Cap: ${MAX_MARKET_CAP:,.0f}
 • SL -6%
 
 ✅ يعتمد على آخر شمعة مغلقة وليس الشمعة المفتوحة
-✅ سيتم إرسال تقرير أسباب الفشل بعد كل دورة فحص.
 """
     send_telegram(msg)
 
@@ -1209,7 +1070,6 @@ def scanner_loop():
 
     while True:
         try:
-            reset_failed_stats()
             update_cmc_filter()
             monitor_active_trades()
 
@@ -1231,7 +1091,6 @@ def scanner_loop():
             multi_sent = process_multi_exchange_signals(all_signals)
 
             monitor_active_trades()
-            send_failed_summary()
 
             print(f"Full scan finished. Candidates: {len(all_signals)} | Multi alerts sent: {multi_sent}")
 
